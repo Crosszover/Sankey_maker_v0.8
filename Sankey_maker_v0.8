@@ -1,0 +1,207 @@
+import re
+import tkinter as tk
+from tkinter import scrolledtext
+import plotly.graph_objects as go
+
+def parse_input(input_text):
+    lines = input_text.strip().split('\n')
+    flows = []
+    node_colors = {}
+    node_labels = {}
+    title = "Sankey Diagram"
+    
+    for line in lines:
+        line = line.strip()
+        if line.startswith('//') or not line:
+            continue
+        
+        if line.startswith(':'):
+            # Node color or label definition
+            parts = line[1:].split(None, 1)
+            if len(parts) > 1:
+                if parts[1].startswith('#'):
+                    node_colors[parts[0]] = parts[1]
+                else:
+                    node_labels[parts[0]] = parts[1]
+        elif line.lower().startswith('title:'):
+            # Title definition
+            title = line.split(':', 1)[1].strip()
+        else:
+            # Flow definition
+            match = re.match(r'(.+?)\s+\[(\d+)\]\s+(.+?)(?:\s+(#[0-9A-Fa-f]{3,6}))?$', line)
+            if match:
+                source, value, target, color = match.groups()
+                flows.append({
+                    'source': source.strip(),
+                    'target': target.strip(),
+                    'value': int(value),
+                    'color': color
+                })
+    
+    return flows, node_colors, node_labels, title
+
+def calculate_node_values(flows):
+    """Calcula los valores correctos para cada nodo basado en los flujos"""
+    node_values = {}
+    
+    # Primero, calculamos las entradas para cada nodo
+    for flow in flows:
+        target = flow['target']
+        value = flow['value']
+        
+        if target not in node_values:
+            node_values[target] = {'in': 0, 'out': []}
+        node_values[target]['in'] += value
+
+    # Luego, calculamos las salidas para cada nodo
+    for flow in flows:
+        source = flow['source']
+        value = flow['value']
+        
+        if source not in node_values:
+            node_values[source] = {'in': 0, 'out': []}
+        node_values[source]['out'].append(value)
+
+    # El valor final de cada nodo será:
+    # - Para nodos fuente: la suma de sus salidas
+    # - Para nodos destino: la suma de sus entradas
+    # - Para nodos intermedios: el máximo entre entradas y la suma de salidas
+    final_values = {}
+    for node, values in node_values.items():
+        sum_out = sum(values['out'])
+        if values['in'] == 0:  # Nodo fuente
+            final_values[node] = sum_out
+        elif sum_out == 0:  # Nodo destino
+            final_values[node] = values['in']
+        else:  # Nodo intermedio
+            final_values[node] = max(values['in'], sum_out)
+    
+    return final_values
+
+def format_number(number):
+    if number >= 1e9:
+        return f"{number/1e9:.1f}B"
+    elif number >= 1e6:
+        return f"{number/1e6:.1f}M"
+    elif number >= 1e3:
+        return f"{number/1e3:.1f}K"
+    else:
+        return f"{number:.0f}"
+
+def create_sankey_diagram(flows, node_colors, node_labels, title):
+    # Calcular los valores correctos de los nodos
+    node_values = calculate_node_values(flows)
+    
+    # Recopilar todos los nodos únicos
+    nodes = set()
+    for flow in flows:
+        nodes.add(flow['source'])
+        nodes.add(flow['target'])
+    
+    nodes = list(nodes)
+    node_indices = {node: i for i, node in enumerate(nodes)}
+    
+    # Preparar los datos para el diagrama
+    link_sources = [node_indices[flow['source']] for flow in flows]
+    link_targets = [node_indices[flow['target']] for flow in flows]
+    link_values = [flow['value'] for flow in flows]
+    
+    # Generar colores para los nodos
+    color_palette = ["#FFB3BA", "#BAFFC9", "#BAE1FF", "#FFFFBA", "#FFDFBA",
+                    "#E1BAFF", "#C7CEEA", "#F0E6EF", "#B5EAD7", "#FFD3B6"]
+    node_color_list = []
+    node_labels_list = []
+    
+    for node in nodes:
+        # Asignar color
+        if node in node_colors:
+            node_color_list.append(node_colors[node])
+        else:
+            node_color_list.append(color_palette[len(node_color_list) % len(color_palette)])
+        
+        # Crear etiqueta con el valor correcto
+        value_str = format_number(node_values[node])
+        label = f"{node}<br>{value_str}"
+        if node in node_labels:
+            label += f"<br>{node_labels[node]}"
+        node_labels_list.append(label)
+    
+    # Crear el diagrama
+    fig = go.Figure(data=[go.Sankey(
+        node = dict(
+            pad = 15,
+            thickness = 20,
+            line = dict(color = "black", width = 0.5),
+            label = node_labels_list,
+            color = node_color_list
+        ),
+        link = dict(
+            source = link_sources,
+            target = link_targets,
+            value = link_values,
+            color = [node_color_list[s] for s in link_sources]
+        )
+    )])
+    
+    fig.update_layout(
+        title_text=title,
+        font_size=10,
+        autosize=True,
+        width=1200,
+        height=800
+    )
+    
+    return fig
+
+def generate_diagram():
+    input_text = text_area.get("1.0", tk.END)
+    flows, node_colors, node_labels, title = parse_input(input_text)
+    fig = create_sankey_diagram(flows, node_colors, node_labels, title)
+    fig.show()
+
+# GUI setup
+root = tk.Tk()
+root.title("FlowViz Pro: Generador de Diagramas Sankey")
+root.geometry("800x600")
+
+text_area = scrolledtext.ScrolledText(root, wrap=tk.WORD, width=90, height=30)
+text_area.pack(padx=10, pady=10)
+
+# Texto de ejemplo
+example_text = """// Título del Diagrama Sankey
+Title: RESULTADOS SEPTIEMBRE 2024
+// Flujos de Ingresos
+Alquiler de Maquinaria [17745000] Ingresos Totales
+// Distribución de Ingresos
+Ingresos Totales [17745000] Resultado Operativo
+// Desglose de Gastos Operativos
+Resultado Operativo [5371611] Gastos de Personal
+Resultado Operativo [10426519] Otros Gastos de Explotación
+Resultado Operativo [914063] Deterioro y Amortizaciones
+Resultado Operativo [1032807] Resultado de Explotación
+// Desglose detallado de Gastos de Personal
+Gastos de Personal [2000000] Sueldos Direccion
+Gastos de Personal [2407861] Sueldos Chantier
+Gastos de Personal [963750] Sueldos Oficina Libreville
+// Desglose principales Otros Gastos
+Otros Gastos de Explotación [4984000] Reparaciones
+Otros Gastos de Explotación [2700000] Primas Empleados
+Otros Gastos de Explotación [1044348] Lubricantes
+Otros Gastos de Explotación [6682171] Otros Gastos Varios
+// Colores Personalizados para Nodos Clave
+:Ingresos Totales #4CAF50
+:Resultado Operativo #2196F3
+:Gastos de Personal #FFC107
+:Otros Gastos de Explotación #FF5722
+:Resultado de Explotación #8BC34A"""
+
+text_area.insert(tk.INSERT, example_text)
+
+# Agregar texto de ayuda
+help_text = tk.Label(root, text="Formato: 'Origen [Valor] Destino' para flujos\n':Nodo #Color' para colores\n':Nodo Etiqueta' para etiquetas", justify=tk.LEFT)
+help_text.pack(pady=5)
+
+generate_button = tk.Button(root, text="Generar Diagrama", command=generate_diagram)
+generate_button.pack(pady=10)
+
+root.mainloop()
